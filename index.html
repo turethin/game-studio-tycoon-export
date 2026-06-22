@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, user-scalable=no, initial-scale=1.0, viewport-fit=cover">
+		<title>Game Studio Tycoon</title>
+		<meta name="apple-mobile-web-app-capable" content="yes">
+		<meta name="mobile-web-app-capable" content="yes">
+		<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+		<meta name="apple-mobile-web-app-title" content="游戏工作室大亨">
+		<style>
+html, body, #canvas {
+	margin: 0;
+	padding: 0;
+	border: 0;
+}
+
+body {
+	color: white;
+	background-color: black;
+	overflow: hidden;
+	touch-action: none;
+}
+
+#canvas {
+	display: block;
+	width: 100%;
+	height: 100%;
+	touch-action: none;
+}
+
+#canvas:focus {
+	outline: none;
+}
+
+#status, #status-splash, #status-progress {
+	position: absolute;
+	left: 0;
+	right: 0;
+}
+
+#status, #status-splash {
+	top: 0;
+	bottom: 0;
+}
+
+#status {
+	background-color: #242424;
+	display: flex;
+	flex-direction: column;
+	justify-content: center;
+	align-items: center;
+	visibility: hidden;
+}
+
+#status-splash {
+	max-height: 100%;
+	max-width: 100%;
+	margin: auto;
+}
+
+#status-splash.show-image--false {
+	display: none;
+}
+
+#status-splash.fullsize--true {
+	height: 100%;
+	width: 100%;
+	object-fit: contain;
+}
+
+#status-splash.use-filter--false {
+	image-rendering: pixelated;
+}
+
+#status-progress, #status-notice {
+	display: none;
+}
+
+#status-progress {
+	bottom: 10%;
+	width: 50%;
+	margin: 0 auto;
+}
+
+#status-progress-bar-container {
+	position: absolute;
+	bottom: 8%;
+	left: 50%;
+	transform: translateX(-50%);
+	width: 40%;
+	max-width: 480px;
+	height: 8px;
+	background: rgba(255, 255, 255, 0.15);
+	border: 1px solid rgba(255, 255, 255, 0.45);
+	border-radius: 5px;
+	overflow: hidden;
+	z-index: 2;
+}
+
+#status-progress-bar {
+	width: 0%;
+	height: 100%;
+	background: linear-gradient(90deg, #4a8adf, #6fb5ff);
+	border-radius: 4px;
+	transition: width 0.2s ease;
+}
+
+#status-notice {
+	background-color: #5b3943;
+	border-radius: 0.5rem;
+	border: 1px solid #9b3943;
+	color: #e0e0e0;
+	font-family: 'Noto Sans', 'Droid Sans', Arial, sans-serif;
+	line-height: 1.3;
+	margin: 0 2rem;
+	overflow: hidden;
+	padding: 1rem;
+	text-align: center;
+	z-index: 1;
+}
+
+/* 竖屏旋转：把 canvas 和 status 容器旋转 90 度塞进竖屏。
+   尺寸由 JS 动态设置（用 innerWidth/Height 而非 100vw/vh，避免 iOS 刘海/工具栏误差） */
+#rotate-container {
+	width: 100vw;
+	height: 100vh;
+	position: fixed;
+	top: 0;
+	left: 0;
+	overflow: hidden;
+}
+		</style>
+		<link id="-gd-engine-icon" rel="icon" type="image/png" href="index.icon.png" />
+<link rel="apple-touch-icon" href="index.apple-touch-icon.png"/>
+<style>body{margin:0;padding:0;background:#000;overflow:hidden}canvas{display:block}</style>
+	</head>
+	<body>
+		<div id="rotate-container">
+			<canvas id="canvas">
+				Your browser does not support the canvas tag.
+			</canvas>
+
+			<div id="status">
+				<img id="status-splash" class="show-image--true fullsize--true use-filter--true" src="index.png" alt="">
+				<div id="status-progress-bar-container">
+					<div id="status-progress-bar"></div>
+				</div>
+				<div id="status-notice"></div>
+			</div>
+		</div>
+
+		<noscript>
+			Your browser does not support JavaScript.
+		</noscript>
+
+		<script src="index.js"></script>
+		<script>
+// canvasResizePolicy=0：Godot 不主动设 canvas 尺寸，只读当前尺寸更新 GL。
+// 我们用 rAF 每帧同步 drawing buffer 到 CSS 布局尺寸 × dpr。
+function syncCanvasSize() {
+	var canvas = document.getElementById('canvas');
+	if (canvas) {
+		var dpr = window.devicePixelRatio || 1;
+		var w = Math.floor(canvas.offsetWidth * dpr);
+		var h = Math.floor(canvas.offsetHeight * dpr);
+		if (w > 0 && h > 0 && (canvas.width !== w || canvas.height !== h)) {
+			canvas.width = w;
+			canvas.height = h;
+		}
+	}
+	requestAnimationFrame(syncCanvasSize);
+}
+requestAnimationFrame(syncCanvasSize);
+window.addEventListener('resize', function() { syncCanvasSize(); });
+window.addEventListener('orientationchange', function() { setTimeout(syncCanvasSize, 200); });
+
+// ── 竖屏旋转适配（PC 横屏完全不执行） ──
+function isPortrait() {
+	return window.innerWidth < window.innerHeight;
+}
+
+function applyRotation() {
+	var container = document.getElementById('rotate-container');
+	if (!container) return;
+	if (isPortrait()) {
+		var sw = window.innerWidth;   // 竖屏屏幕宽（小）
+		var sh = window.innerHeight;  // 竖屏屏幕高（大）
+		// 容器旋转后宽=sh，高=sw，用 JS 精确设置避免 100vh 含刘海误差
+		container.style.width = sh + 'px';
+		container.style.height = sw + 'px';
+		container.style.left = sw + 'px';
+		container.style.top = '0';
+		container.style.transformOrigin = 'top left';
+		container.style.transform = 'rotate(90deg)';
+	} else {
+		// 横屏：恢复默认，Godot 原生管理
+		container.style.width = '';
+		container.style.height = '';
+		container.style.left = '';
+		container.style.top = '';
+		container.style.transformOrigin = '';
+		container.style.transform = '';
+	}
+}
+applyRotation();
+window.addEventListener('resize', applyRotation);
+window.addEventListener('orientationchange', function() { setTimeout(applyRotation, 200); });
+
+// 竖屏触摸/鼠标坐标修正
+// 旋转 90deg 顺时针后映射：canvas(cx,cy) → 屏幕(sh-cy, cx)
+// 逆映射：屏幕(sx,sy) → canvas(sy, sh-sx)，sh=竖屏 innerHeight
+if (isPortrait()) {
+	var canvasEl = document.getElementById('canvas');
+	// 覆盖 getBoundingClientRect，返回 canvas 内部坐标系的逻辑矩形
+	// 这样 Godot 的 computePosition 不会因旋转后的视觉包围盒而算错
+	canvasEl.getBoundingClientRect = function() {
+		var dpr = window.devicePixelRatio || 1;
+		return {
+			x: 0, y: 0, left: 0, top: 0,
+			right: canvasEl.width / dpr, bottom: canvasEl.height / dpr,
+			width: canvasEl.width / dpr, height: canvasEl.height / dpr,
+			toJSON: function() { return this; }
+		};
+	};
+
+	function fixEventCoords(evt) {
+		if (!isPortrait()) return;
+		var sh = window.innerHeight;
+		var sx = evt.clientX;
+		var sy = evt.clientY;
+		// 屏幕 → canvas 内部坐标
+		var cx = sy;
+		var cy = sh - sx;
+		// 用 defineProperty 覆盖只读属性
+		try {
+			Object.defineProperty(evt, 'clientX', { value: cx, configurable: true });
+			Object.defineProperty(evt, 'clientY', { value: cy, configurable: true });
+		} catch (e) {
+			// 某些浏览器 Touch 对象的 clientX/Y 不可覆盖，跳过
+		}
+	}
+
+	// pointer 事件（鼠标 + 触摸，capture 阶段拦截）
+	['pointerdown', 'pointermove', 'pointerup', 'pointercancel'].forEach(function(type) {
+		document.addEventListener(type, fixEventCoords, true);
+	});
+	// touch 事件（iOS Safari 可能不走 pointer）
+	['touchstart', 'touchmove', 'touchend', 'touchcancel'].forEach(function(type) {
+		document.addEventListener(type, function(e) {
+			if (!isPortrait()) return;
+			var sh = window.innerHeight;
+			// TouchList 的项不可直接改，但 e.touches[i].clientX 可通过原型覆盖
+			var touchHandler = function(t) {
+				var sx = t.clientX;
+				var sy = t.clientY;
+				try {
+					Object.defineProperty(t, 'clientX', { value: sy, configurable: true });
+					Object.defineProperty(t, 'clientY', { value: sh - sx, configurable: true });
+				} catch (err) {}
+			};
+			for (var i = 0; i < e.touches.length; i++) touchHandler(e.touches[i]);
+			for (var i = 0; i < e.changedTouches.length; i++) touchHandler(e.changedTouches[i]);
+		}, true);
+	});
+}
+const GODOT_CONFIG = {"args":[],"canvasResizePolicy":0,"emscriptenPoolSize":8,"ensureCrossOriginIsolationHeaders":true,"executable":"index","experimentalVK":false,"fileSizes":{"index.pck":36265060,"index.wasm":37695054},"focusCanvas":true,"gdextensionLibs":[],"godotPoolSize":4};
+const GODOT_THREADS_ENABLED = false;
+const engine = new Engine(GODOT_CONFIG);
+
+(function () {
+	const statusOverlay = document.getElementById('status');
+	const statusNotice = document.getElementById('status-notice');
+	const statusProgressBar = document.getElementById('status-progress-bar');
+
+	let initializing = true;
+	let statusMode = '';
+
+	function setStatusMode(mode) {
+		if (statusMode === mode || !initializing) {
+			return;
+		}
+		if (mode === 'hidden') {
+			statusOverlay.remove();
+			initializing = false;
+			return;
+		}
+		statusOverlay.style.visibility = 'visible';
+		statusNotice.style.display = mode === 'notice' ? 'block' : 'none';
+		statusMode = mode;
+	}
+
+	function setStatusNotice(text) {
+		while (statusNotice.lastChild) {
+			statusNotice.removeChild(statusNotice.lastChild);
+		}
+		const lines = text.split('\n');
+		lines.forEach((line) => {
+			statusNotice.appendChild(document.createTextNode(line));
+			statusNotice.appendChild(document.createElement('br'));
+		});
+	}
+
+	function displayFailureNotice(err) {
+		console.error(err);
+		if (err instanceof Error) {
+			setStatusNotice(err.message);
+		} else if (typeof err === 'string') {
+			setStatusNotice(err);
+		} else {
+			setStatusNotice('An unknown error occurred.');
+		}
+		setStatusMode('notice');
+		initializing = false;
+	}
+
+	const missing = Engine.getMissingFeatures({
+		threads: GODOT_THREADS_ENABLED,
+	});
+
+	if (missing.length !== 0) {
+		if (GODOT_CONFIG['serviceWorker'] && GODOT_CONFIG['ensureCrossOriginIsolationHeaders'] && 'serviceWorker' in navigator) {
+			let serviceWorkerRegistrationPromise;
+			try {
+				serviceWorkerRegistrationPromise = navigator.serviceWorker.getRegistration();
+			} catch (err) {
+				serviceWorkerRegistrationPromise = Promise.reject(new Error('Service worker registration failed.'));
+			}
+			// There's a chance that installing the service worker would fix the issue
+			Promise.race([
+				serviceWorkerRegistrationPromise.then((registration) => {
+					if (registration != null) {
+						return Promise.reject(new Error('Service worker already exists.'));
+					}
+					return registration;
+				}).then(() => engine.installServiceWorker()),
+				// For some reason, `getRegistration()` can stall
+				new Promise((resolve) => {
+					setTimeout(() => resolve(), 2000);
+				}),
+			]).then(() => {
+				// Reload if there was no error.
+				window.location.reload();
+			}).catch((err) => {
+				console.error('Error while registering service worker:', err);
+			});
+		} else {
+			// Display the message as usual
+			const missingMsg = 'Error\nThe following features required to run Godot projects on the Web are missing:\n';
+			displayFailureNotice(missingMsg + missing.join('\n'));
+		}
+	} else {
+		setStatusMode('splash');
+		engine.startGame({
+			'onProgress': function (current, total) {
+				if (current > 0 && total > 0) {
+					statusProgressBar.style.width = (current / total * 100) + '%';
+				} else {
+					statusProgressBar.style.width = '0%';
+				}
+			},
+		}).then(() => {
+			setStatusMode('hidden');
+		}, displayFailureNotice);
+	}
+}());
+		</script>
+	</body>
+</html>
+
